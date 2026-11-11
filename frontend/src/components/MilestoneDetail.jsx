@@ -17,14 +17,14 @@ const SEV_ORDER = { critical: 0, major: 1, minor: 2 };
 // Which role must act next in each status, and what the other role sees meanwhile.
 const NEXT_ACTOR = {
   draft: ["client", "fund this milestone with PayPal"],
-  funded: ["detailer", "upload the deliverable"],
-  revision_requested: ["detailer", "upload the corrected drawing"],
-  submitted: ["detailer", "submit the deliverable for AI review"],
+  funded: ["freelancer", "upload the deliverable"],
+  revision_requested: ["freelancer", "upload a corrected version"],
+  submitted: ["freelancer", "submit the deliverable for AI review"],
   awaiting_approval: ["client", "approve and release the payment"],
   released: ["client", "confirm the payout"],
   payout_failed: ["client", "retry the payout"],
 };
-const ROLE_NAME = { client: "Client", detailer: "Detailer" };
+const ROLE_NAME = { client: "Client", freelancer: "Freelancer" };
 
 function Stepper({ status }) {
   return (
@@ -48,7 +48,7 @@ function ScoreRing({ score, passed }) {
   );
 }
 
-function QaReport({ deliverable }) {
+function QaReport({ deliverable, isAI }) {
   const cols = useMemo(() => [
     { field: "severity", width: 105, sort: "asc", comparator: (a, b) => SEV_ORDER[a] - SEV_ORDER[b],
       cellRenderer: (p) => <span className={`sev sev-${p.value}`}>{p.value}</span> },
@@ -61,21 +61,38 @@ function QaReport({ deliverable }) {
   return (
     <section className="card">
       <div className="card-head">
-        <h3>QA report <span className="muted small">- {deliverable.filename}</span></h3>
-        <a className="small" href={`/api/deliverables/${deliverable.id}/file`} target="_blank" rel="noreferrer">Open PDF</a>
+        <h3>{isAI ? "AI review" : "QA report"} <span className="muted small">- {deliverable.filename}</span></h3>
+        <a className="small" href={`/api/deliverables/${deliverable.id}/file`} target="_blank" rel="noreferrer">Open file</a>
       </div>
       <div className="qa-summary">
         <ScoreRing score={deliverable.score} passed={deliverable.passed} />
         <div>
           <div className={`verdict ${deliverable.passed ? "ok" : "bad"}`}>{deliverable.passed ? "PASS" : "FAIL"}</div>
-          <div className="chips">
-            {["drawing_no", "revision", "date", "drawn_by", "checked_by", "scale"].map((k) => (
-              <span key={k} className={`chip ${x[k] ? "" : "chip-missing"}`}>{k.replace("_", " ")}: <b>{x[k] || "missing"}</b></span>
-            ))}
-          </div>
+          {isAI ? (
+            <p className="review-summary">{x.summary || "Reviewed against the client's requirements."}</p>
+          ) : (
+            <div className="chips">
+              {["drawing_no", "revision", "date", "drawn_by", "checked_by", "scale"].map((k) => (
+                <span key={k} className={`chip ${x[k] ? "" : "chip-missing"}`}>{k.replace("_", " ")}: <b>{x[k] || "missing"}</b></span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
-      {deliverable.findings.length ? (
+      {isAI && x.criteria_results ? (
+        <ul className="criteria">
+          {x.criteria_results.map((c) => (
+            <li key={c.id} className={c.met ? "met" : "unmet"}>
+              <span className="mark" aria-label={c.met ? "met" : "not met"}>{c.met ? "✓" : "✗"}</span>
+              <div>
+                <b>{c.criterion}</b>
+                <div className="muted small">{c.evidence}</div>
+                {!c.met && c.fix && <div className="fix small">Fix: {c.fix}</div>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : deliverable.findings.length ? (
         <div className="grid-wrap"><AgGridReact theme={gridTheme} rowData={deliverable.findings} columnDefs={cols} domLayout="autoHeight" /></div>
       ) : <div className="alert alert-green">No findings - all checklist items passed.</div>}
     </section>
@@ -105,10 +122,10 @@ function Timeline({ events }) {
   );
 }
 
-function Uploader({ milestone, onDone, onError }) {
+function Uploader({ milestone, domain, onDone, onError }) {
   const [busy, setBusy] = useState(false);
   const [samples, setSamples] = useState([]);
-  useEffect(() => { api.samples().then(setSamples).catch(() => {}); }, []);
+  useEffect(() => { api.samples(milestone.domain).then(setSamples).catch(() => {}); }, [milestone.domain]);
   async function send(file) {
     setBusy(true);
     try { await api.upload(milestone.id, file); onDone(); } catch (e) { onError(e.message); } finally { setBusy(false); }
@@ -116,9 +133,9 @@ function Uploader({ milestone, onDone, onError }) {
   return (
     <div>
       <label className={`dropzone ${busy ? "busy" : ""}`}>
-        <input type="file" accept="application/pdf" disabled={busy} onChange={(e) => e.target.files[0] && send(e.target.files[0])} />
-        <b>{busy ? "Uploading..." : "Upload deliverable PDF"}</b>
-        <span className="muted small">Shop drawing for REV {milestone.expected_revision}</span>
+        <input type="file" accept={domain.accept.join(",")} disabled={busy} onChange={(e) => e.target.files[0] && send(e.target.files[0])} />
+        <b>{busy ? "Uploading..." : "Upload your deliverable"}</b>
+        <span className="muted small">{domain.ai ? domain.hint : `Shop drawing PDF for REV ${milestone.expected_revision}`}</span>
       </label>
       {samples.length > 0 && (
         <div className="samples small">
@@ -136,6 +153,9 @@ export default function MilestoneDetail({ config, role, detail, reload, notify }
   const [busy, setBusy] = useState("");
   const m = detail;
   const latest = m.deliverables[0];
+  const domain = config.domains[m.domain] || config.domains.other;
+  const isAI = domain.ai;
+  const criteria = (m.criteria || "").split(/\r?\n/).map((l) => l.trim().replace(/^[-*]\s*/, "")).filter(Boolean);
 
   async function act(label, fn, success) {
     setBusy(label);
@@ -151,10 +171,10 @@ export default function MilestoneDetail({ config, role, detail, reload, notify }
     case "funded":
     case "revision_requested":
       action = (<><p>{m.status === "revision_requested" ? "The agent requested a revision. Upload the corrected drawing." : "Funds are held by PayPal. Upload your deliverable to get paid."}</p>
-        <Uploader milestone={m} onDone={() => { notify("Deliverable uploaded", "green"); reload(); }} onError={(msg) => notify(msg, "red")} /></>);
+        <Uploader milestone={m} domain={domain} onDone={() => { notify("Deliverable uploaded", "green"); reload(); }} onError={(msg) => notify(msg, "red")} /></>);
       break;
     case "submitted":
-      action = (<><p>Submit for AI review. The agent checks the drawing against the checklist and decides what happens to the held payment.</p>
+      action = (<><p>Submit for AI review. {isAI ? "The AI checks your work against every requirement the client wrote" : "The agent checks the drawing against the checklist"} and decides what happens to the held payment.</p>
         <button className="btn-primary btn-lg" disabled={!!busy} onClick={() => act("agent", () => api.runAgent(m.id), (r) => `Agent (${r.mode}) decision: ${r.decision?.replace("_", " ")}`)}>
           {busy === "agent" ? <><span className="spinner" /> Agent reviewing...</> : "Submit for AI review"}</button></>);
       break;
@@ -195,10 +215,15 @@ export default function MilestoneDetail({ config, role, detail, reload, notify }
         </div>
         <div className="status-row">
           <StatusPill status={m.status} />
-          <span className="muted small">REV {m.expected_revision} required - auto-release {m.auto_release ? "on" : "off"}</span>
+          <span className="type-tag">{domain.label}</span>
+          <span className="muted small">{isAI ? `${criteria.length} requirement${criteria.length === 1 ? "" : "s"} - client approves release` : `REV ${m.expected_revision} required - auto-release ${m.auto_release ? "on" : "off"}`}</span>
         </div>
         <Stepper status={m.status} />
         {m.description && <p className="muted small">{m.description}</p>}
+        {isAI && criteria.length > 0 && (
+          <details className="req-list" open={role === "freelancer"}><summary>Acceptance requirements ({criteria.length})</summary>
+            <ol>{criteria.map((c, i) => <li key={i}>{c}</li>)}</ol></details>
+        )}
         <div className="action">{action}</div>
         {role === "client" && CANCELLABLE.includes(m.status) && (
           <button className="btn-link danger small" disabled={!!busy}
@@ -207,7 +232,7 @@ export default function MilestoneDetail({ config, role, detail, reload, notify }
         )}
       </section>
 
-      <QaReport deliverable={latest} />
+      <QaReport deliverable={latest} isAI={isAI} />
 
       <section className="card">
         <h3>Payout split</h3>

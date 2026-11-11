@@ -17,7 +17,7 @@ settings.ai_mode = "rules"  # .env may hold real AI keys; tests must stay offlin
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
 CLIENT = {"X-ProofPay-Role": "client"}
-DETAILER = {"X-ProofPay-Role": "detailer"}
+FREELANCER = {"X-ProofPay-Role": "freelancer"}
 
 
 class FakePayPal:
@@ -77,7 +77,7 @@ def _fund(c, mid):
 
 def _upload(c, mid, name):
     with open(SAMPLES / name, "rb") as f:
-        r = c.post(f"/api/milestones/{mid}/deliverables", headers=DETAILER, files={"file": (name, f, "application/pdf")})
+        r = c.post(f"/api/milestones/{mid}/deliverables", headers=FREELANCER, files={"file": (name, f, "application/pdf")})
     assert r.status_code == 201, r.text
 
 
@@ -92,12 +92,12 @@ def test_fail_then_pass_then_client_approves(client):
     mid = _create(client)
     _fund(client, mid)
     _upload(client, mid, "beam_B12_rev_A_fail.pdf")
-    r = client.post(f"/api/milestones/{mid}/agent/run", headers=DETAILER).json()
+    r = client.post(f"/api/milestones/{mid}/agent/run", headers=FREELANCER).json()
     assert r["decision"] == "revision_requested"
     assert not any(c[0] == "capture" for c in client.fake.calls)
 
     _upload(client, mid, "beam_B12_rev_B_pass.pdf")
-    r = client.post(f"/api/milestones/{mid}/agent/run", headers=DETAILER).json()
+    r = client.post(f"/api/milestones/{mid}/agent/run", headers=FREELANCER).json()
     assert r["decision"] == "awaiting_approval"  # auto_release off -> human approves
 
     r = client.post(f"/api/milestones/{mid}/approve", headers=CLIENT)
@@ -113,7 +113,7 @@ def test_agent_auto_release(client):
     mid = _create(client, auto_release=True)
     _fund(client, mid)
     _upload(client, mid, "beam_B12_rev_B_pass.pdf")
-    r = client.post(f"/api/milestones/{mid}/agent/run", headers=DETAILER).json()
+    r = client.post(f"/api/milestones/{mid}/agent/run", headers=FREELANCER).json()
     assert r["decision"] == "released" and r["status"] == "released"
 
 
@@ -135,7 +135,7 @@ def test_agent_cannot_release_failed_qa(client):
 def test_rejects_non_pdf_and_bad_splits(client):
     mid = _create(client)
     _fund(client, mid)
-    r = client.post(f"/api/milestones/{mid}/deliverables", headers=DETAILER, files={"file": ("x.pdf", b"hello", "application/pdf")})
+    r = client.post(f"/api/milestones/{mid}/deliverables", headers=FREELANCER, files={"file": ("x.pdf", b"hello", "application/pdf")})
     assert r.status_code == 409
     r = client.post("/api/milestones", headers=CLIENT, json={
         "title": "Bad", "client_name": "A", "freelancer_name": "B", "freelancer_email": "b@example.com",
@@ -145,19 +145,19 @@ def test_rejects_non_pdf_and_bad_splits(client):
 
 def test_roles_are_enforced(client):
     mid = _create(client)
-    # no role / detailer cannot create or fund
+    # no role / freelancer cannot create or fund
     assert client.post(f"/api/milestones/{mid}/paypal/order").status_code == 401
-    assert client.post(f"/api/milestones/{mid}/paypal/order", headers=DETAILER).status_code == 403
+    assert client.post(f"/api/milestones/{mid}/paypal/order", headers=FREELANCER).status_code == 403
     _fund(client, mid)
     # client cannot upload or run the agent
     with open(SAMPLES / "beam_B12_rev_B_pass.pdf", "rb") as f:
         r = client.post(f"/api/milestones/{mid}/deliverables", headers=CLIENT, files={"file": ("x.pdf", f, "application/pdf")})
-    assert r.status_code == 403 and "Detailer" in r.json()["detail"]
+    assert r.status_code == 403 and "Freelancer" in r.json()["detail"]
     _upload(client, mid, "beam_B12_rev_B_pass.pdf")
     assert client.post(f"/api/milestones/{mid}/agent/run", headers=CLIENT).status_code == 403
-    client.post(f"/api/milestones/{mid}/agent/run", headers=DETAILER)
-    # detailer cannot release their own payment
-    r = client.post(f"/api/milestones/{mid}/approve", headers=DETAILER)
+    client.post(f"/api/milestones/{mid}/agent/run", headers=FREELANCER)
+    # freelancer cannot release their own payment
+    r = client.post(f"/api/milestones/{mid}/approve", headers=FREELANCER)
     assert r.status_code == 403 and not any(c[0] == "capture" for c in client.fake.calls)
     # reads stay open to both
     assert client.get(f"/api/milestones/{mid}").status_code == 200

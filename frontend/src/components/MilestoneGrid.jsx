@@ -26,6 +26,8 @@ export default function MilestoneGrid({ rows, selectedId, onSelect }) {
     () => [
       { field: "id", headerName: "#", width: 70, sort: "desc" },
       { field: "title", headerName: "Milestone", flex: 2, minWidth: 180, filter: true },
+      { field: "domain", headerName: "Type", width: 120, filter: true,
+        valueFormatter: (p) => ({ steel_drawing: "Drawing", code: "Code", design: "Design", document: "Document", other: "Other" })[p.value] || p.value },
       { field: "freelancer_name", headerName: "Freelancer", flex: 1, minWidth: 120, filter: true },
       {
         field: "amount", headerName: "Amount", width: 120, type: "rightAligned",

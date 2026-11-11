@@ -1,7 +1,7 @@
 # ProofPay - pay on verified proof
 
-**AI-verified milestone payments on PayPal.** The client's money is held by PayPal, an AI agent checks the
-deliverable against the agreed acceptance checklist, and the funds are captured and split to the team
+**AI-verified milestone payments on PayPal, for any kind of freelance work.** The client's money is held by PayPal, an AI checks the
+deliverable (drawings, code, designs, documents) against the client's own acceptance requirements, and the funds are captured and split to the team
 only when the work is verified.
 
 > Built for the PayPal AI Hackathon 2026. Runs entirely on the **PayPal sandbox**, so no real money moves.
@@ -25,15 +25,27 @@ move money.
 | 6. Track | Payout status updates through webhooks or polling; every step is logged. | Webhooks (signature-verified) |
 | Cancel | Client cancels; the hold is voided and the money is never taken. | Authorizations `/void` |
 
+### Work types
+
+| Type | How it is verified | Accepted files |
+|---|---|---|
+| Steel shop drawing | Built-in deterministic checks (below) | PDF |
+| Code / software | AI evaluation against the client's requirements | Source files or a `.zip` of the project |
+| Design / image | AI evaluation (multimodal) | PNG, JPG, WEBP, PDF |
+| Document / writing | AI evaluation | PDF, TXT, MD, CSV |
+| Other | AI evaluation | Any of the above |
+
+For AI-evaluated work the client writes the requirements as a prompt, **one per line** (each type has an editable example). Gemini returns met / not met with evidence and a suggested fix for every line. **The score and pass/fail are computed in code**, so every requirement must be met, and missing answers count as not met. The uploaded file is treated as untrusted data: a hidden "approve this" note does not change the result (the demo code sample contains one). Payment can only be released after the latest upload passes, and AI-evaluated work always needs the client's approval (no auto-release).
+
 ### Roles
 
 | Role | Can do |
 |---|---|
 | **Client** | Create milestones, fund with PayPal, approve and release, cancel (void), refresh or retry payouts |
-| **Detailer** | Upload deliverables and submit them for AI review |
+| **Freelancer** | Upload deliverables and submit them for AI review |
 | Both | View the dashboard, QA reports, payout split and audit trail |
 
-Switch roles with **Acting as: Client / Detailer** at the top right. The server enforces the rules (a Detailer can never release their own payment). For the demo, the role is chosen in the UI, which is not real authentication; production would add per-user login.
+Switch roles with **Acting as: Client / Freelancer** at the top right. The server enforces the rules (a Freelancer can never release their own payment). For the demo, the role is chosen in the UI, which is not real authentication; production would add per-user login.
 
 ### The AI agent
 
@@ -135,7 +147,7 @@ The free tier sleeps when idle, so the first request takes about 30 seconds. SQL
 
 1. As **Client**: **+ New milestone**, fill in the payee emails (sandbox personal accounts), then **Create**.
 2. **Pay with PayPal** using the sandbox personal account. The status becomes *Funded - held*.
-3. Switch to **Detailer**. Under **Demo files**, click `beam_B12_rev_A_fail.pdf`, then **Submit for AI review**. It finds the wrong revision, the missing checker,
+3. Switch to **Freelancer**. Under **Demo files**, click `beam_B12_rev_A_fail.pdf`, then **Submit for AI review**. It finds the wrong revision, the missing checker,
    a TBD note and BOM mismatches, then requests a revision. **The money stays on hold.**
 4. Click `beam_B12_rev_B_pass.pdf`, then **Submit for AI review**. It verifies the drawing (score 100).
 5. Switch to **Client** and click **Approve and release**. PayPal captures the funds, and Payouts splits them 70/30. **Refresh payout status** shows *Paid out*.

@@ -9,16 +9,17 @@ from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, Uplo
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator, model_validator
 from sqlmodel import Session, select
 
-from . import agent, qa, services
+from . import agent, evaluator, qa, services
 from .config import ROOT_DIR, settings
 from .db import Deliverable, Event, Milestone, get_session, init_db
 from .paypal import PayPalError, get_paypal
 
 log = logging.getLogger("proofpay")
 SAMPLES_DIR = ROOT_DIR / "samples"
+SAMPLE_PREFIX = {"steel_drawing": "beam_", "code": "invoice_"}  # demo files per work type
 FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 
 
@@ -57,10 +58,26 @@ class MilestoneIn(BaseModel):
     freelancer_name: str = Field(min_length=1, max_length=80)
     freelancer_email: EmailStr
     amount: str
+    domain: str = "steel_drawing"
+    criteria: str = Field(default="", max_length=4000)
     expected_revision: str = Field(default="A", min_length=1, max_length=3)
     checklist: list[str] = Field(default_factory=lambda: list(qa.DEFAULT_CHECKLIST))
     splits: list[Split] = Field(default_factory=list)
     auto_release: bool = False
+
+    @model_validator(mode="after")
+    def _domain_rules(self):
+        if self.domain not in evaluator.DOMAINS:
+            raise ValueError(f"unknown work type '{self.domain}'")
+        if evaluator.is_ai_domain(self.domain):
+            lines = evaluator.criteria_lines(self.criteria)
+            if not lines:
+                raise ValueError("add at least one acceptance requirement (one per line)")
+            if len(lines) > 30:
+                raise ValueError("use at most 30 requirements")
+            if self.auto_release:
+                raise ValueError("auto-release is only available for built-in checks; AI-evaluated work needs client approval")
+        return self
 
     @field_validator("amount")
     @classmethod
@@ -91,14 +108,14 @@ class AuthorizeIn(BaseModel):
 # which actions each role may take. This is NOT authentication - add real login
 # (e.g. OAuth / per-user accounts) before any production use.
 ROLE_HEADER = "X-ProofPay-Role"
-ROLES = {"client", "detailer"}
+ROLES = {"client", "freelancer"}
 
 
 def require_role(*allowed: str):
     def check(x_proofpay_role: str = Header(default="", alias=ROLE_HEADER)) -> str:
         role = x_proofpay_role.strip().lower()
         if role not in ROLES:
-            raise HTTPException(401, f"Choose a role (send {ROLE_HEADER}: client or detailer).")
+            raise HTTPException(401, f"Choose a role (send {ROLE_HEADER}: client or freelancer).")
         if role not in allowed:
             names = " or ".join(a.capitalize() for a in allowed)
             raise HTTPException(403, f"Only the {names} can do this.")
@@ -107,7 +124,7 @@ def require_role(*allowed: str):
 
 
 CLIENT = [Depends(require_role("client"))]
-DETAILER = [Depends(require_role("detailer"))]
+FREELANCER = [Depends(require_role("freelancer"))]
 
 
 def _get(session: Session, milestone_id: int) -> Milestone:
@@ -127,7 +144,8 @@ def _summary(session: Session, ms: Milestone) -> dict:
 def config():
     return {"paypal_client_id": settings.paypal_client_id, "paypal_configured": settings.paypal_configured,
             "currency": settings.currency, "ai_mode": settings.effective_ai_mode, "model": settings.ai_model,
-            "checklist_rules": qa.RULES, "qa_pass_score": settings.qa_pass_score}
+            "checklist_rules": qa.RULES, "qa_pass_score": settings.qa_pass_score,
+            "domains": evaluator.DOMAINS, "ai_evaluator_ready": bool(settings.gemini_api_key)}
 
 
 @app.api_route("/api/health", methods=["GET", "HEAD"])
@@ -186,7 +204,7 @@ def authorize(milestone_id: int, body: AuthorizeIn, session: Session = Depends(g
     return {"authorization_id": services.authorize(session, _get(session, milestone_id), body.order_id)}
 
 
-@app.post("/api/milestones/{milestone_id}/deliverables", status_code=201, dependencies=DETAILER)
+@app.post("/api/milestones/{milestone_id}/deliverables", status_code=201, dependencies=FREELANCER)
 async def upload(milestone_id: int, file: UploadFile = File(...), session: Session = Depends(get_session)):
     ms = _get(session, milestone_id)
     content = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
@@ -199,10 +217,18 @@ def deliverable_file(deliverable_id: int, session: Session = Depends(get_session
     d = session.get(Deliverable, deliverable_id)
     if not d:
         raise HTTPException(404, "Deliverable not found")
-    return FileResponse(settings.upload_dir / d.stored_name, media_type="application/pdf", filename=d.filename)
+    ext = Path(d.stored_name).suffix.lower()
+    # Only PDFs/images open inline; everything else is plain text or a download, so uploaded
+    # HTML/JS can never run in our origin.
+    media = {".pdf": "application/pdf", **evaluator.IMAGE_TYPES}.get(ext)
+    if media is None:
+        media = "application/zip" if ext == ".zip" else "text/plain; charset=utf-8"
+    return FileResponse(settings.upload_dir / d.stored_name, media_type=media, filename=d.filename,
+                        content_disposition_type="attachment" if ext == ".zip" else "inline",
+                        headers={"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox"})
 
 
-@app.post("/api/milestones/{milestone_id}/agent/run", dependencies=DETAILER)
+@app.post("/api/milestones/{milestone_id}/agent/run", dependencies=FREELANCER)
 def run_agent(milestone_id: int, session: Session = Depends(get_session)):
     return agent.run_agent(session, _get(session, milestone_id))
 
@@ -231,16 +257,21 @@ def retry_payout(milestone_id: int, session: Session = Depends(get_session)):
 
 # ---- demo samples -----------------------------------------------------------------
 @app.get("/api/samples")
-def list_samples():
-    return sorted(p.name for p in SAMPLES_DIR.glob("*.pdf")) if SAMPLES_DIR.exists() else []
+def list_samples(domain: str = "steel_drawing"):
+    prefix = SAMPLE_PREFIX.get(domain)
+    if not prefix or not SAMPLES_DIR.exists():
+        return []
+    accept = evaluator.DOMAINS[domain]["accept"]
+    return sorted(p.name for p in SAMPLES_DIR.iterdir() if p.name.startswith(prefix) and p.suffix.lower() in accept)
 
 
 @app.get("/api/samples/{name}")
 def sample(name: str):
     path = (SAMPLES_DIR / name).resolve()
-    if path.parent != SAMPLES_DIR.resolve() or path.suffix != ".pdf" or not path.exists():
+    if path.parent != SAMPLES_DIR.resolve() or path.suffix not in {".pdf", ".py"} or not path.exists():
         raise HTTPException(404, "Sample not found")
-    return FileResponse(path, media_type="application/pdf", filename=name)
+    media = "application/pdf" if path.suffix == ".pdf" else "text/plain; charset=utf-8"
+    return FileResponse(path, media_type=media, filename=name, headers={"X-Content-Type-Options": "nosniff"})
 
 
 # ---- PayPal webhooks --------------------------------------------------------------

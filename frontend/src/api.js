@@ -1,5 +1,5 @@
-// Active demo role ("client" | "detailer"), sent on every request; the server enforces it.
-let currentRole = localStorage.getItem("proofpay-role") || "client";
+// Active demo role ("client" | "freelancer"), sent on every request; the server enforces it.
+let currentRole = localStorage.getItem("proofpay-role") === "freelancer" ? "freelancer" : "client";
 export const getRole = () => currentRole;
 export function setRole(role) {
   currentRole = role;
@@ -39,11 +39,12 @@ export const api = {
   void: (id) => post(`/milestones/${id}/void`),
   refreshPayout: (id) => post(`/milestones/${id}/payout/refresh`),
   retryPayout: (id) => post(`/milestones/${id}/payout/retry`),
-  samples: () => request("/samples"),
+  samples: (domain) => request(`/samples?domain=${encodeURIComponent(domain || "steel_drawing")}`),
   sampleFile: async (name) => {
     const res = await fetch(`/api/samples/${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error("Sample not found");
-    return new File([await res.blob()], name, { type: "application/pdf" });
+    const blob = await res.blob();
+    return new File([blob], name, { type: name.endsWith(".pdf") ? "application/pdf" : "text/plain" });
   },
 };
 

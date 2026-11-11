@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
-from . import qa
+from . import evaluator, qa
 from .config import settings
 from .db import Deliverable, Event, Milestone, utcnow
 from .paypal import PayPalError, authorization_id_from, get_paypal
@@ -106,13 +106,15 @@ def authorize(session: Session, ms: Milestone, order_id: str) -> str:
 def save_deliverable(session: Session, ms: Milestone, filename: str, content: bytes) -> Deliverable:
     if ms.status not in UPLOADABLE:
         raise FlowError(f"Cannot upload a deliverable while status is '{ms.status}'.")
-    if not content.startswith(b"%PDF"):
-        raise FlowError("Only PDF deliverables are accepted.")
     if len(content) > settings.max_upload_mb * 1024 * 1024:
         raise FlowError(f"File exceeds {settings.max_upload_mb} MB.")
-    stored = f"{uuid.uuid4().hex}.pdf"
+    try:
+        ext = evaluator.validate_upload(ms.domain, filename, content)
+    except evaluator.EvaluationError as e:
+        raise FlowError(str(e))
+    stored = f"{uuid.uuid4().hex}{ext}"  # random name; the original name is only displayed
     (settings.upload_dir / stored).write_bytes(content)
-    safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")[:120] or "deliverable.pdf"
+    safe_name = "".join(c for c in filename if c.isalnum() or c in "._- ")[:120] or f"deliverable{ext}"
     d = Deliverable(milestone_id=ms.id, filename=safe_name, stored_name=stored)
     session.add(d)
     session.commit()
@@ -126,12 +128,21 @@ def run_qa(session: Session, ms: Milestone) -> dict:
     d = latest_deliverable(session, ms.id)
     if not d:
         raise FlowError("No deliverable uploaded yet.")
-    result = qa.run_checks(settings.upload_dir / d.stored_name, ms.expected_revision, ms.checklist, settings.qa_pass_score)
+    path = settings.upload_dir / d.stored_name
+    if evaluator.is_ai_domain(ms.domain):
+        try:
+            result = evaluator.evaluate(path, d.filename, title=ms.title, brief=ms.description, criteria=ms.criteria)
+        except evaluator.EvaluationError as e:
+            log(session, ms.id, "error", f"AI evaluation failed: {e}")
+            raise FlowError(str(e))
+    else:
+        result = qa.run_checks(path, ms.expected_revision, ms.checklist, settings.qa_pass_score)
     d.score, d.passed = result["score"], result["passed"]
     d.findings, d.extracted = result["findings"], result["extracted"]
     session.add(d)
     session.commit()
-    log(session, ms.id, "qa", f"QA score {d.score}/100 - {'PASS' if d.passed else 'FAIL'} ({len(d.findings)} findings)",
+    label = "AI evaluation" if evaluator.is_ai_domain(ms.domain) else "QA"
+    log(session, ms.id, "qa", f"{label} score {d.score}/100 - {'PASS' if d.passed else 'FAIL'} ({len(d.findings)} findings)",
         {"deliverable_id": d.id, "score": d.score, "passed": d.passed})
     return {"deliverable_id": d.id, **result}
 
@@ -142,12 +153,15 @@ def release(session: Session, ms: Milestone, actor: str, justification: str = ""
     if ms.status not in RELEASABLE or not ms.authorization_id:
         raise FlowError(f"Cannot release payment while status is '{ms.status}'.")
     d = latest_deliverable(session, ms.id)
+    # Hard guards enforced in code, independent of what any model says.
+    if not d or not d.passed:  # nobody gets paid before the latest deliverable passes verification
+        raise FlowError("The latest deliverable has not passed verification yet - payment cannot be released.")
     if actor == "agent":
-        # Hard guard enforced in code, independent of what the model says.
         if not ms.auto_release:
             raise FlowError("Auto-release is off for this milestone - client approval required.")
-        if not d or not d.passed:
-            raise FlowError("Latest deliverable has not passed QA - release refused.")
+        if evaluator.is_ai_domain(ms.domain):
+            # An LLM grade can be influenced by the file's content, so a human approves AI-evaluated work.
+            raise FlowError("AI-evaluated work needs the client's approval - auto-release refused.")
 
     pp = get_paypal()
     capture = pp.capture_authorization(ms.authorization_id, idempotency_key=f"capture-ms{ms.id}-{ms.authorization_id}")

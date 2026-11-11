@@ -16,7 +16,7 @@ export default function App() {
   const [role, setRoleState] = useState(getRole());
   const isClient = role === "client";
 
-  const switchRole = (r) => { saveRole(r); setRoleState(r); setShowCreate(false); notify(`Now acting as the ${r === "client" ? "Client" : "Detailer"}`); };
+  const switchRole = (r) => { saveRole(r); setRoleState(r); setShowCreate(false); notify(`Now acting as the ${r === "client" ? "Client" : "Freelancer"}`); };
 
   const notify = useCallback((text, tone = "blue") => {
     setToast({ text, tone, id: Date.now() });
@@ -62,9 +62,9 @@ export default function App() {
           <span className="badge">PayPal sandbox</span>
           <div className="role-switch" role="group" aria-label="Acting as">
             <span className="muted small">Acting as</span>
-            {["client", "detailer"].map((r) => (
+            {["client", "freelancer"].map((r) => (
               <button key={r} className={role === r ? "active" : ""} aria-pressed={role === r} onClick={() => switchRole(r)}>
-                {r === "client" ? "Client" : "Detailer"}</button>
+                {r === "client" ? "Client" : "Freelancer"}</button>
             ))}
           </div>
           {isClient && <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New milestone</button>}
@@ -88,9 +88,9 @@ export default function App() {
             <div className="empty card">
               <h3>How it works</h3>
               <ol>
-                <li>The <b>Client</b> creates a milestone and funds it with PayPal. Funds are <b>authorized and held</b>.</li>
-                <li>The <b>Detailer</b> uploads the deliverable (shop drawing PDF) and submits it for AI review.</li>
-                <li>The AI agent checks it against the acceptance checklist and requests a revision or verifies it.</li>
+                <li>The <b>Client</b> creates a milestone for any kind of work (drawings, code, designs, documents), writes the acceptance requirements, and funds it with PayPal. Funds are <b>authorized and held</b>.</li>
+                <li>The <b>Freelancer</b> uploads the work (PDF, code, .zip, image or text) and submits it for AI review.</li>
+                <li>The AI checks it against every requirement, with evidence, and either asks for a revision or verifies it.</li>
                 <li>When the Client approves, the funds are <b>captured</b> and split to payees with <b>PayPal Payouts</b>.</li>
               </ol>
               {isClient
