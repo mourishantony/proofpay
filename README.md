@@ -25,9 +25,19 @@ move money.
 | 6. Track | Payout status updates through webhooks or polling; every step is logged. | Webhooks (signature-verified) |
 | Cancel | Client cancels; the hold is voided and the money is never taken. | Authorizations `/void` |
 
+### Roles
+
+| Role | Can do |
+|---|---|
+| **Client** | Create milestones, fund with PayPal, approve and release, cancel (void), refresh or retry payouts |
+| **Detailer** | Upload deliverables and submit them for AI review |
+| Both | View the dashboard, QA reports, payout split and audit trail |
+
+Switch roles with **Acting as: Client / Detailer** at the top right. The server enforces the rules (a Detailer can never release their own payment). For the demo, the role is chosen in the UI, which is not real authentication; production would add per-user login.
+
 ### The AI agent
 
-- Runs on **Google Gemini** (`gemini-2.5-flash`, free API tier) or **Claude** (`claude-opus-5-5`), using function/tool calling with the same tool set. The provider is picked from whichever API key is set.
+- Runs on **Google Gemini** (`gemini-3.6-flash`, free API tier) or **Claude** (`claude-opus-5-5`), using function/tool calling with the same tool set. The provider is picked from whichever API key is set.
 - Its tools are scoped to **one milestone**: `get_milestone`, `run_qa_check`, `request_revision`,
   `recommend_approval`, `release_payment`.
 - **Money safety is enforced in code, not in the prompt.** `release_payment` refuses unless the client
@@ -123,12 +133,12 @@ The free tier sleeps when idle, so the first request takes about 30 seconds. SQL
 
 ## Demo script (for judges)
 
-1. **+ New milestone**, fill in the payee emails (sandbox personal accounts), then **Create**.
+1. As **Client**: **+ New milestone**, fill in the payee emails (sandbox personal accounts), then **Create**.
 2. **Pay with PayPal** using the sandbox personal account. The status becomes *Funded - held*.
-3. Under **Demo files**, click `beam_B12_rev_A_fail.pdf`, then **Run AI review agent**. It finds the wrong revision, the missing checker,
+3. Switch to **Detailer**. Under **Demo files**, click `beam_B12_rev_A_fail.pdf`, then **Submit for AI review**. It finds the wrong revision, the missing checker,
    a TBD note and BOM mismatches, then requests a revision. **The money stays on hold.**
-4. Click `beam_B12_rev_B_pass.pdf`, then **Run AI review agent**. It verifies the drawing (score 100).
-5. **Approve and release**. PayPal captures the funds, and Payouts splits them 70/30. **Refresh payout status** shows *Paid out*.
+4. Click `beam_B12_rev_B_pass.pdf`, then **Submit for AI review**. It verifies the drawing (score 100).
+5. Switch to **Client** and click **Approve and release**. PayPal captures the funds, and Payouts splits them 70/30. **Refresh payout status** shows *Paid out*.
 
 ### Test credentials
 

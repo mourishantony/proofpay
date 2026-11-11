@@ -1,5 +1,14 @@
+// Active demo role ("client" | "detailer"), sent on every request; the server enforces it.
+let currentRole = localStorage.getItem("proofpay-role") || "client";
+export const getRole = () => currentRole;
+export function setRole(role) {
+  currentRole = role;
+  localStorage.setItem("proofpay-role", role);
+}
+
 async function request(path, options = {}) {
-  const res = await fetch(`/api${path}`, options);
+  const headers = { ...(options.headers || {}), "X-ProofPay-Role": currentRole };
+  const res = await fetch(`/api${path}`, { ...options, headers });
   const body = res.headers.get("content-type")?.includes("application/json") ? await res.json() : null;
   if (!res.ok) {
     const detail = body?.detail;

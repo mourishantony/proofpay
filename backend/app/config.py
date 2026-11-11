@@ -28,7 +28,7 @@ class Settings:
     ai_mode: str = os.getenv("AI_MODE", "auto")  # auto | claude | gemini | rules
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-5-5")
     claude_effort: str = os.getenv("CLAUDE_EFFORT", "medium")
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     qa_pass_score: int = int(os.getenv("QA_PASS_SCORE", "80"))
 
     # Storage

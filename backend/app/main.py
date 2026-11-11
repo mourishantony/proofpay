@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -86,6 +86,30 @@ class AuthorizeIn(BaseModel):
     order_id: str = Field(min_length=5, max_length=64)
 
 
+# ---- roles ---------------------------------------------------------------------
+# Demo role switch: the UI sends the active role in a header and the server enforces
+# which actions each role may take. This is NOT authentication - add real login
+# (e.g. OAuth / per-user accounts) before any production use.
+ROLE_HEADER = "X-ProofPay-Role"
+ROLES = {"client", "detailer"}
+
+
+def require_role(*allowed: str):
+    def check(x_proofpay_role: str = Header(default="", alias=ROLE_HEADER)) -> str:
+        role = x_proofpay_role.strip().lower()
+        if role not in ROLES:
+            raise HTTPException(401, f"Choose a role (send {ROLE_HEADER}: client or detailer).")
+        if role not in allowed:
+            names = " or ".join(a.capitalize() for a in allowed)
+            raise HTTPException(403, f"Only the {names} can do this.")
+        return role
+    return check
+
+
+CLIENT = [Depends(require_role("client"))]
+DETAILER = [Depends(require_role("detailer"))]
+
+
 def _get(session: Session, milestone_id: int) -> Milestone:
     ms = session.get(Milestone, milestone_id)
     if not ms:
@@ -129,7 +153,7 @@ def list_milestones(session: Session = Depends(get_session)):
     return [_summary(session, m) for m in rows]
 
 
-@app.post("/api/milestones", status_code=201)
+@app.post("/api/milestones", status_code=201, dependencies=CLIENT)
 def create_milestone(body: MilestoneIn, session: Session = Depends(get_session)):
     splits = [s.model_dump() for s in body.splits]
     services.validate_splits(splits)
@@ -152,17 +176,17 @@ def get_milestone(milestone_id: int, session: Session = Depends(get_session)):
             "payout_preview": services.compute_splits(ms)}
 
 
-@app.post("/api/milestones/{milestone_id}/paypal/order")
+@app.post("/api/milestones/{milestone_id}/paypal/order", dependencies=CLIENT)
 def create_order(milestone_id: int, session: Session = Depends(get_session)):
     return {"id": services.create_order(session, _get(session, milestone_id))}
 
 
-@app.post("/api/milestones/{milestone_id}/paypal/authorize")
+@app.post("/api/milestones/{milestone_id}/paypal/authorize", dependencies=CLIENT)
 def authorize(milestone_id: int, body: AuthorizeIn, session: Session = Depends(get_session)):
     return {"authorization_id": services.authorize(session, _get(session, milestone_id), body.order_id)}
 
 
-@app.post("/api/milestones/{milestone_id}/deliverables", status_code=201)
+@app.post("/api/milestones/{milestone_id}/deliverables", status_code=201, dependencies=DETAILER)
 async def upload(milestone_id: int, file: UploadFile = File(...), session: Session = Depends(get_session)):
     ms = _get(session, milestone_id)
     content = await file.read(settings.max_upload_mb * 1024 * 1024 + 1)
@@ -178,29 +202,29 @@ def deliverable_file(deliverable_id: int, session: Session = Depends(get_session
     return FileResponse(settings.upload_dir / d.stored_name, media_type="application/pdf", filename=d.filename)
 
 
-@app.post("/api/milestones/{milestone_id}/agent/run")
+@app.post("/api/milestones/{milestone_id}/agent/run", dependencies=DETAILER)
 def run_agent(milestone_id: int, session: Session = Depends(get_session)):
     return agent.run_agent(session, _get(session, milestone_id))
 
 
-@app.post("/api/milestones/{milestone_id}/approve")
+@app.post("/api/milestones/{milestone_id}/approve", dependencies=CLIENT)
 def approve(milestone_id: int, session: Session = Depends(get_session)):
     result = services.release(session, _get(session, milestone_id), actor="client")
     return {"capture_status": result["capture"].get("status"), "payout_batch_id": result["payout_batch_id"]}
 
 
-@app.post("/api/milestones/{milestone_id}/void")
+@app.post("/api/milestones/{milestone_id}/void", dependencies=CLIENT)
 def void(milestone_id: int, session: Session = Depends(get_session)):
     services.void(session, _get(session, milestone_id))
     return {"ok": True}
 
 
-@app.post("/api/milestones/{milestone_id}/payout/refresh")
+@app.post("/api/milestones/{milestone_id}/payout/refresh", dependencies=CLIENT)
 def refresh_payout(milestone_id: int, session: Session = Depends(get_session)):
     return services.refresh_payout(session, _get(session, milestone_id))
 
 
-@app.post("/api/milestones/{milestone_id}/payout/retry")
+@app.post("/api/milestones/{milestone_id}/payout/retry", dependencies=CLIENT)
 def retry_payout(milestone_id: int, session: Session = Depends(get_session)):
     return services.retry_payout(session, _get(session, milestone_id))
 

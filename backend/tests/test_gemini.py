@@ -3,7 +3,7 @@ from google.genai import types as gtypes
 
 from app import agent
 from app.config import settings
-from tests.test_flow import _create, _fund, _upload, client  # noqa: F401  (fixture)
+from tests.test_flow import DETAILER, _create, _fund, _upload, client  # noqa: F401  (fixture)
 
 
 def _call(name, args=None):
@@ -39,7 +39,7 @@ def test_gemini_requests_revision(client, monkeypatch):  # noqa: F811
         _resp(_call("request_revision", {"message": "Please fix and resubmit.", "reasons": ["Issue as Rev B"]})),
         _resp(gtypes.Part(text="Sent back for revision; funds remain on hold.")),
     ])
-    r = client.post(f"/api/milestones/{mid}/agent/run").json()
+    r = client.post(f"/api/milestones/{mid}/agent/run", headers=DETAILER).json()
     assert r["mode"] == "gemini" and r["decision"] == "revision_requested"
     assert "funds remain on hold" in r["summary"]
     # second request carries the model turn plus both tool results
@@ -56,6 +56,6 @@ def test_gemini_cannot_release_without_auto_release(client, monkeypatch):  # noq
         _resp(_call("release_payment", {"justification": "looks good"})),  # model overreaches
         _resp(gtypes.Part(text="Release refused; leaving for client approval.")),
     ])
-    r = client.post(f"/api/milestones/{mid}/agent/run").json()
+    r = client.post(f"/api/milestones/{mid}/agent/run", headers=DETAILER).json()
     assert not any(c[0] == "capture" for c in client.fake.calls)  # guard held
     assert r["decision"] == "awaiting_approval" and r["mode"] == "gemini+rules"

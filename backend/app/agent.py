@@ -188,7 +188,8 @@ def _gemini_tools() -> list:
 
 
 def _run_gemini(tools: MilestoneTools, max_turns: int = 10) -> str:
-    client = genai.Client(api_key=settings.gemini_api_key)
+    # 60 s per call so a busy model falls back to rules mode instead of hanging the request.
+    client = genai.Client(api_key=settings.gemini_api_key, http_options=gtypes.HttpOptions(timeout=60_000))
     config = gtypes.GenerateContentConfig(
         system_instruction=SYSTEM_PROMPT,
         tools=_gemini_tools(),

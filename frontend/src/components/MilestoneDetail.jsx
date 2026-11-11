@@ -14,6 +14,17 @@ const STEPS = [
 ];
 const CANCELLABLE = ["funded", "submitted", "revision_requested", "awaiting_approval"];
 const SEV_ORDER = { critical: 0, major: 1, minor: 2 };
+// Which role must act next in each status, and what the other role sees meanwhile.
+const NEXT_ACTOR = {
+  draft: ["client", "fund this milestone with PayPal"],
+  funded: ["detailer", "upload the deliverable"],
+  revision_requested: ["detailer", "upload the corrected drawing"],
+  submitted: ["detailer", "submit the deliverable for AI review"],
+  awaiting_approval: ["client", "approve and release the payment"],
+  released: ["client", "confirm the payout"],
+  payout_failed: ["client", "retry the payout"],
+};
+const ROLE_NAME = { client: "Client", detailer: "Detailer" };
 
 function Stepper({ status }) {
   return (
@@ -121,7 +132,7 @@ function Uploader({ milestone, onDone, onError }) {
   );
 }
 
-export default function MilestoneDetail({ config, detail, reload, notify }) {
+export default function MilestoneDetail({ config, role, detail, reload, notify }) {
   const [busy, setBusy] = useState("");
   const m = detail;
   const latest = m.deliverables[0];
@@ -139,13 +150,13 @@ export default function MilestoneDetail({ config, detail, reload, notify }) {
       break;
     case "funded":
     case "revision_requested":
-      action = (<><p>{m.status === "revision_requested" ? "The agent requested a revision. Upload the corrected drawing." : "Funds are held. The freelancer can now submit the deliverable."}</p>
+      action = (<><p>{m.status === "revision_requested" ? "The agent requested a revision. Upload the corrected drawing." : "Funds are held by PayPal. Upload your deliverable to get paid."}</p>
         <Uploader milestone={m} onDone={() => { notify("Deliverable uploaded", "green"); reload(); }} onError={(msg) => notify(msg, "red")} /></>);
       break;
     case "submitted":
-      action = (<><p>Run the AI review agent. It checks the drawing against the checklist and decides what happens to the held payment.</p>
+      action = (<><p>Submit for AI review. The agent checks the drawing against the checklist and decides what happens to the held payment.</p>
         <button className="btn-primary btn-lg" disabled={!!busy} onClick={() => act("agent", () => api.runAgent(m.id), (r) => `Agent (${r.mode}) decision: ${r.decision?.replace("_", " ")}`)}>
-          {busy === "agent" ? <><span className="spinner" /> Agent reviewing...</> : "Run AI review agent"}</button></>);
+          {busy === "agent" ? <><span className="spinner" /> Agent reviewing...</> : "Submit for AI review"}</button></>);
       break;
     case "awaiting_approval":
       action = (<><p>The agent verified the deliverable. Approve to <b>capture</b> the held funds and pay out the split.</p>
@@ -166,6 +177,11 @@ export default function MilestoneDetail({ config, detail, reload, notify }) {
     default:
       action = <div className="alert">This milestone was cancelled and the hold was released.</div>;
   }
+  const [owner, waitFor] = NEXT_ACTOR[m.status] || [];
+  if (owner && owner !== role) {
+    action = (<div className="waiting">Waiting for the <b>{ROLE_NAME[owner]}</b> to {waitFor}.
+      <span className="muted small">(Switch role at the top right to continue the demo.)</span></div>);
+  }
 
   return (
     <div className="detail">
@@ -184,7 +200,7 @@ export default function MilestoneDetail({ config, detail, reload, notify }) {
         <Stepper status={m.status} />
         {m.description && <p className="muted small">{m.description}</p>}
         <div className="action">{action}</div>
-        {CANCELLABLE.includes(m.status) && (
+        {role === "client" && CANCELLABLE.includes(m.status) && (
           <button className="btn-link danger small" disabled={!!busy}
             onClick={() => window.confirm("Cancel and release the held funds back to the client?") && act("void", () => api.void(m.id), () => "Authorization voided")}>
             Cancel milestone and void hold</button>

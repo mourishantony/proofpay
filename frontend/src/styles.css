@@ -112,3 +112,8 @@ details summary { cursor: pointer; font-size: 12px; color: var(--violet); }
 
 @media (max-width: 1000px) { .layout.with-detail { grid-template-columns: 1fr; } .stats { grid-template-columns: repeat(2, 1fr); } }
 .ag-cell-wrap-text { line-height: 1.45 !important; padding-top: 8px; padding-bottom: 8px; word-break: normal; }
+.role-switch { display: flex; align-items: center; gap: 4px; background: #eef1f6; border-radius: 99px; padding: 3px 4px 3px 10px; }
+.role-switch button { border: 0; background: transparent; font: inherit; font-size: 12.5px; font-weight: 600; color: #475467; padding: 5px 12px; border-radius: 99px; cursor: pointer; }
+.role-switch button.active { background: #fff; color: var(--blue-d); box-shadow: 0 1px 3px #0002; }
+.waiting { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; color: var(--muted); font-size: 13.5px; }
+.waiting b { color: var(--text); }
