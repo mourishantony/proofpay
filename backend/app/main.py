@@ -106,7 +106,7 @@ def config():
             "checklist_rules": qa.RULES, "qa_pass_score": settings.qa_pass_score}
 
 
-@app.get("/api/health")
+@app.api_route("/api/health", methods=["GET", "HEAD"])
 def health():
     return {"ok": True}
 
@@ -248,7 +248,7 @@ async def paypal_webhook(request: Request, session: Session = Depends(get_sessio
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
-    @app.get("/{path:path}", include_in_schema=False)
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     def spa(path: str):
         candidate = (FRONTEND_DIST / path).resolve()
         if path and candidate.is_file() and FRONTEND_DIST.resolve() in candidate.parents:

@@ -133,7 +133,7 @@ The free tier sleeps when idle, so the first request takes about 30 seconds. SQL
 ### Test credentials
 
 <!-- Fill before submission: sandbox buyer login for judges (SANDBOX ONLY - never real credentials) -->
-- Hosted demo: `TODO`
+- Hosted demo: <https://proofpay-g4lj.onrender.com> (free tier: first load can take ~30 s)
 - Sandbox buyer: `TODO` / `TODO`
 
 ## Security notes
