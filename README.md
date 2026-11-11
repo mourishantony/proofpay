@@ -27,7 +27,7 @@ move money.
 
 ### The AI agent
 
-- Built with **Claude** (`claude-opus-5-5`) using tool calling, adaptive thinking and server-side refusal fallbacks.
+- Runs on **Google Gemini** (`gemini-2.5-flash`, free API tier) or **Claude** (`claude-opus-5-5`), using function/tool calling with the same tool set. The provider is picked from whichever API key is set.
 - Its tools are scoped to **one milestone**: `get_milestone`, `run_qa_check`, `request_revision`,
   `recommend_approval`, `release_payment`.
 - **Money safety is enforced in code, not in the prompt.** `release_payment` refuses unless the client
@@ -57,7 +57,7 @@ React + Vite + AG Grid + PayPal JS SDK
 FastAPI ── services (state machine) ── PayPal REST (Orders, Payments, Payouts, Webhooks)
    |            |
    |            └── QA engine (PyMuPDF, deterministic rules)
-   └── Agent (Claude tool use) ── tools bound to one milestone
+   └── Agent (Gemini or Claude tool calling) ── tools bound to one milestone
 SQLite (milestones, deliverables, audit events)
 ```
 
@@ -80,7 +80,7 @@ Prerequisites: Python 3.11+, Node 20+, a free PayPal developer account.
 
 ```bash
 cp .env.example .env
-# fill PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET and optionally ANTHROPIC_API_KEY
+# fill PAYPAL_CLIENT_ID, PAYPAL_CLIENT_SECRET and optionally GEMINI_API_KEY (free at https://aistudio.google.com/apikey) or ANTHROPIC_API_KEY
 ```
 
 ### 3. Backend
@@ -115,7 +115,7 @@ The tests run the whole flow (fund, failing upload, revision, passing upload, ap
 
 1. Push this repo to GitHub.
 2. In Render, go to **New > Blueprint** and select the repo. It picks up `render.yaml`.
-3. Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `ANTHROPIC_API_KEY` and (optionally) `PAYPAL_WEBHOOK_ID`.
+3. Set `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `GEMINI_API_KEY` (or `ANTHROPIC_API_KEY`) and (optionally) `PAYPAL_WEBHOOK_ID`.
 4. In the PayPal sandbox app, add a webhook to `https://<your-app>.onrender.com/api/paypal/webhook` for
    `PAYMENT.PAYOUTSBATCH.*`, `PAYMENT.CAPTURE.*` and `PAYMENT.AUTHORIZATION.*`. Put its ID in `PAYPAL_WEBHOOK_ID`.
 

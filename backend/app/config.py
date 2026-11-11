@@ -25,9 +25,10 @@ class Settings:
     platform_fee_percent: float = float(os.getenv("PLATFORM_FEE_PERCENT", "0"))
 
     # AI agent
-    ai_mode: str = os.getenv("AI_MODE", "auto")  # auto | claude | rules
+    ai_mode: str = os.getenv("AI_MODE", "auto")  # auto | claude | gemini | rules
     claude_model: str = os.getenv("CLAUDE_MODEL", "claude-opus-5-5")
     claude_effort: str = os.getenv("CLAUDE_EFFORT", "medium")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     qa_pass_score: int = int(os.getenv("QA_PASS_SCORE", "80"))
 
     # Storage
@@ -52,11 +53,22 @@ class Settings:
 
     @property
     def effective_ai_mode(self) -> str:
-        """'claude' when an Anthropic credential is available, else deterministic 'rules'."""
-        if self.ai_mode in {"claude", "rules"}:
+        """auto: Claude if an Anthropic key is set, else Gemini if a Gemini key is set, else deterministic rules."""
+        if self.ai_mode in {"claude", "gemini", "rules"}:
             return self.ai_mode
-        has_key = bool(os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"))
-        return "claude" if has_key else "rules"
+        if os.getenv("ANTHROPIC_API_KEY") or os.getenv("ANTHROPIC_AUTH_TOKEN"):
+            return "claude"
+        if self.gemini_api_key:
+            return "gemini"
+        return "rules"
+
+    @property
+    def gemini_api_key(self) -> str:
+        return os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or ""
+
+    @property
+    def ai_model(self) -> str:
+        return {"claude": self.claude_model, "gemini": self.gemini_model}.get(self.effective_ai_mode, "")
 
 
 settings = Settings()

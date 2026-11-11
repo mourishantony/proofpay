@@ -53,8 +53,8 @@ export default function App() {
           <div><b>ProofPay</b><span className="muted small"> - pay on verified proof</span></div>
         </div>
         <div className="topbar-right">
-          <span className={`badge ${config.ai_mode === "claude" ? "badge-ai" : ""}`}>
-            Agent: {config.ai_mode === "claude" ? `Claude (${config.model})` : "rules mode"}</span>
+          <span className={`badge ${config.ai_mode !== "rules" ? "badge-ai" : ""}`}>
+            Agent: {config.ai_mode === "rules" ? "rules mode" : `${config.ai_mode === "gemini" ? "Gemini" : "Claude"} (${config.model})`}</span>
           <span className="badge">PayPal sandbox</span>
           <button className="btn-primary" onClick={() => setShowCreate(true)}>+ New milestone</button>
         </div>

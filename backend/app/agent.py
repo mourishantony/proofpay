@@ -1,14 +1,17 @@
 """Milestone review agent.
 
-Claude reviews the QA evidence and decides: request a revision, recommend approval,
-or (only when the client enabled auto-release AND QA passed) release payment.
-Payment actions are guarded in services.release() - the model cannot bypass them.
-Without an Anthropic credential the same tools run in deterministic 'rules' mode.
+An LLM (Claude or Gemini) reviews the QA evidence and decides: request a revision,
+recommend approval, or (only when the client enabled auto-release AND QA passed)
+release payment. Payment actions are guarded in services.release() - the model
+cannot bypass them. Without any AI key the same tools run in deterministic 'rules' mode.
 """
 import json
 from typing import Any
 
 import anthropic
+from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types as gtypes
 from sqlmodel import Session
 
 from . import services
@@ -172,6 +175,59 @@ def _run_claude(tools: MilestoneTools, max_turns: int = 10) -> str:
     return final_text
 
 
+# ---- Gemini agent loop ------------------------------------------------------
+def _gemini_tools() -> list:
+    decls = []
+    for t in TOOLS:
+        schema = t["input_schema"]
+        kwargs = {"name": t["name"], "description": t["description"]}
+        if schema.get("properties"):  # no-arg tools omit parameters
+            kwargs["parameters_json_schema"] = schema
+        decls.append(gtypes.FunctionDeclaration(**kwargs))
+    return [gtypes.Tool(function_declarations=decls)]
+
+
+def _run_gemini(tools: MilestoneTools, max_turns: int = 10) -> str:
+    client = genai.Client(api_key=settings.gemini_api_key)
+    config = gtypes.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT,
+        tools=_gemini_tools(),
+        automatic_function_calling=gtypes.AutomaticFunctionCallingConfig(disable=True),  # we run tools ourselves
+        thinking_config=gtypes.ThinkingConfig(include_thoughts=True),
+    )
+    contents: list = [gtypes.Content(role="user", parts=[gtypes.Part(text=
+        f"A new deliverable was submitted for milestone #{tools.ms.id}. Review it and take the appropriate action.")])]
+    final_text = ""
+    for _ in range(max_turns):
+        response = client.models.generate_content(model=settings.gemini_model, contents=contents, config=config)
+        candidate = (response.candidates or [None])[0]
+        if candidate is None or candidate.content is None:
+            tools._trace("Gemini returned no content", {"finish_reason": str(candidate and candidate.finish_reason)})
+            break
+        for part in candidate.content.parts or []:
+            if part.thought and part.text:
+                tools._trace("Reasoning", {"thinking": part.text[:2000]})
+            elif part.text and part.text.strip():
+                final_text = part.text.strip()
+                tools._trace(final_text)
+
+        calls = response.function_calls or []
+        if not calls:
+            break
+        contents.append(candidate.content)  # keep thought signatures intact
+        result_parts = []
+        for call in calls:
+            args = dict(call.args or {})
+            tools._trace(f"Tool call: {call.name}", {"input": args})
+            try:
+                out = tools.call(call.name, args)
+            except Exception as e:  # tool bug - report back to the model, don't crash the loop
+                out = {"ok": False, "error": str(e)}
+            result_parts.append(gtypes.Part.from_function_response(name=call.name, response=json.loads(json.dumps(out, default=str))))
+        contents.append(gtypes.Content(role="user", parts=result_parts))
+    return final_text
+
+
 def run_agent(session: Session, ms: Milestone) -> dict:
     if ms.status != "submitted":
         raise services.FlowError(f"Agent runs on submitted deliverables (status is '{ms.status}').")
@@ -189,8 +245,17 @@ def run_agent(session: Session, ms: Milestone) -> dict:
             tools._trace(f"Anthropic API error {e.status_code} - falling back to rules mode")
         except anthropic.APIConnectionError:
             tools._trace("Could not reach Anthropic API - falling back to rules mode")
+    elif mode == "gemini":
+        try:
+            summary = _run_gemini(tools)
+        except genai_errors.ClientError as e:  # 4xx: bad key, quota/rate limit, bad request
+            tools._trace(f"Gemini API error {e.code} - falling back to rules mode", {"message": str(e.message)[:300]})
+        except genai_errors.ServerError as e:
+            tools._trace(f"Gemini server error {e.code} - falling back to rules mode")
+        except (genai_errors.APIError, OSError) as e:
+            tools._trace(f"Could not complete Gemini call ({type(e).__name__}) - falling back to rules mode")
     if tools.decision is None:  # safety net: the milestone must never be left undecided
-        mode = "rules" if mode == "rules" else "claude+rules"
+        mode = "rules" if mode == "rules" else f"{mode}+rules"
         _run_rules(tools)
     session.refresh(ms)
     return {"mode": mode, "decision": tools.decision, "status": ms.status, "summary": summary,

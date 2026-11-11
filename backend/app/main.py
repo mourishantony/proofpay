@@ -102,7 +102,7 @@ def _summary(session: Session, ms: Milestone) -> dict:
 @app.get("/api/config")
 def config():
     return {"paypal_client_id": settings.paypal_client_id, "paypal_configured": settings.paypal_configured,
-            "currency": settings.currency, "ai_mode": settings.effective_ai_mode, "model": settings.claude_model,
+            "currency": settings.currency, "ai_mode": settings.effective_ai_mode, "model": settings.ai_model,
             "checklist_rules": qa.RULES, "qa_pass_score": settings.qa_pass_score}
 
 
